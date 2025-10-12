@@ -1,0 +1,14 @@
+{
+    "SKU123": {
+        "ASIN": "B0XYZ12345",
+        "FNSKU": "X001ABCDEF",
+        "Brand": "Acme",
+        "Title": "Super Fast Charger 20W",
+        "MRP": "699",
+        "HSN": "8504",
+        "GST%": "18",
+        "MfgMonthYear": "Oct-2025",
+        "Condition": "New",
+        "Category": "Chargers"
+    }
+}

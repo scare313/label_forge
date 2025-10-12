@@ -1,0 +1,22 @@
+{
+  "dpi": 300,
+  "fba_label_width_mm": 50,
+  "fba_label_height_mm": 30,
+  "mrp_label_width_mm": 50,
+  "mrp_label_height_mm": 30,
+  "font_path_regular": ".\\fonts\\NotoSans-Regular.ttf",
+  "font_path_bold": ".\\fonts\\NotoSans-Bold.ttf",
+  "print_fba_labels": true,
+  "print_mrp_labels": true,
+  "fba_title_scale": 0.30,
+  "fba_small_scale": 0.50,
+  "fba_footer_pad_px": 30,
+  "mrp_brand_scale": 0.50,
+  "mrp_title_scale": 0.50,
+  "mrp_mrp_scale": 0.60,
+  "mrp_small_scale": 0.50,
+  "mrp_bottom_pad_px": 30,
+  "mrp_show_inclusive_line": true,
+  "mrp_max_title_lines": 2,
+  "limit_preview": 12
+}
