@@ -471,6 +471,14 @@ class QueueManager:
         st.session_state[self.STATE_KEY].append({"SKU": sku, "Qty": int(qty)})
     def clear(self):
         st.session_state[self.STATE_KEY] = []
+    
+    def remove(self, sku: str):
+        st.session_state[self.STATE_KEY] = [item for item in st.session_state[self.STATE_KEY] if item["SKU"] != sku]
+    def update_qty(self, sku: str, qty: int):
+        for item in st.session_state[self.STATE_KEY]:
+            if item["SKU"] == sku:
+                item["Qty"] = qty
+
 
 # =========================
 # Pages (UI)
@@ -501,11 +509,12 @@ class LabelGeneratorPage(BasePage):
     def render(self):
         st.header("🧾 Label Generator")
 
-        # Sidebar Settings (persisted)
+        # ---------- Sidebar: Settings ----------
         with st.sidebar:
             st.header("⚙️ Settings")
             s = self.settings_service.load()
             s.dpi = st.number_input("DPI", 150, 1200, value=int(s.dpi), step=25)
+
             st.subheader("FBA Label (mm)")
             c1, c2 = st.columns(2)
             with c1:
@@ -543,36 +552,90 @@ class LabelGeneratorPage(BasePage):
 
             s.limit_preview = st.number_input("Preview up to N labels", 0, 100, value=int(s.limit_preview), step=1)
 
-            if st.button("💾 Save Settings", width='stretch'):
+            if st.button("💾 Save Settings", use_container_width=True):  # ★
                 self.settings_service.save(s)
                 st.success("Settings saved.", icon="✅")
                 st.cache_data.clear()
 
-        # Build Queue
+        # ---------- Build Queue ----------
         st.subheader("🧺 Print Queue")
+
         df = self.catalog_repo.to_dataframe()
         sku_options = df["SKU"].dropna().astype(str).unique().tolist()
-        col1, col2, col3 = st.columns([2, 2, 1])
-        with col1:
-            sku_pick = st.selectbox("Select SKU", options=[""] + sku_options)
-        with col2:
-            qty_pick = st.number_input("Qty", min_value=1, value=1)
-        with col3:
-            if st.button("➕ Add"):
+
+        # Row: Select SKU | Qty | Add (aligned)
+        add_c1, add_c2, add_c3 = st.columns([2, 1, 1], vertical_alignment="center")  # ★
+        with add_c1:
+            sku_pick = st.selectbox(
+                "Select SKU",
+                options=[""] + sku_options,
+                index=0,
+                label_visibility="collapsed",        # ★ remove label to align
+                placeholder="Select SKU…"            # ★ hint instead of label
+            )
+        with add_c2:
+            qty_pick = st.number_input(
+                "Qty",
+                min_value=1,
+                value=1,
+                step=1,
+                label_visibility="collapsed"         # ★ remove label to align
+            )
+        with add_c3:
+            if st.button("➕ Add", use_container_width=True):  # ★ full width
                 if not sku_pick:
                     st.warning("Pick an SKU to add.", icon="ℹ️")
                 else:
+                    q_now = self.queue.get()
+                    # If SKU already present, increase instead of duplicating
+                    for item in q_now:
+                        if item["SKU"] == sku_pick:
+                            item["Qty"] = int(item["Qty"]) + int(qty_pick)
+                            st.rerun()
                     self.queue.add(sku_pick, int(qty_pick))
+                    st.rerun()
 
+        # Queue table: SKU | Qty (editable) | Remove (aligned)
         q = self.queue.get()
         if q:
-            st.dataframe(pd.DataFrame(q), width='stretch', height=180)
-            if st.button("🧹 Clear Queue", type="secondary"):
-                self.queue.clear()
+            st.caption("Tip: Edit quantities inline, or remove an SKU.")
 
-        # Generate & Preview (unique per SKU)
+            # Header row for visual clarity (no actual labels on inputs)
+            hdr1, hdr2, hdr3 = st.columns([3, 2, 1], vertical_alignment="center")  # ★
+            with hdr1: st.markdown("**SKU**")
+            with hdr2: st.markdown("**Quantity**")
+            with hdr3: st.markdown("**Action**")
+
+            # Draw each row with centered vertical alignment
+            # Using index snapshot; we rerun immediately after removal to keep indices consistent
+            for idx, item in enumerate(list(q)):  # iterate snapshot
+                c1, c2, c3 = st.columns([3, 2, 1], vertical_alignment="center")  # ★
+                with c1:
+                    # Plain text keeps vertical rhythm consistent vs st.write()
+                    st.text(item["SKU"])
+                with c2:
+                    new_qty = st.number_input(
+                        f"qty_edit_{idx}",
+                        min_value=1,
+                        value=int(item["Qty"]),
+                        step=1,
+                        label_visibility="collapsed"          # ★ no label, aligns vertically
+                    )
+                    if new_qty != item["Qty"]:
+                        item["Qty"] = int(new_qty)
+                with c3:
+                    if st.button("Remove", key=f"remove_{idx}", use_container_width=True):  # ★ full width
+                        q.pop(idx)
+                        st.rerun()
+
+            # Clear all (aligned and full-width)
+            if st.button("🧹 Clear Queue", type="secondary", use_container_width=True):  # ★
+                self.queue.clear()
+                st.rerun()
+
+        # ---------- Generate & Preview (unique per SKU) ----------
         st.subheader("🖨️ Preview & Download")
-        if st.button("Generate Labels", type="primary", width='stretch'):
+        if st.button("Generate Labels", type="primary", use_container_width=True):  # ★
             if not q:
                 st.error("Queue is empty. Add at least one SKU.", icon="⚠️")
                 st.stop()
@@ -580,7 +643,7 @@ class LabelGeneratorPage(BasePage):
             s = self.settings_service.load()
             all_items = self.catalog_repo.load_all()
 
-            # Build selection: attach catalog info
+            # Attach catalog info
             selection: List[Tuple[SkuRecord, int]] = []
             for row in q:
                 sku = row["SKU"]
@@ -590,16 +653,15 @@ class LabelGeneratorPage(BasePage):
                     rec = SkuRecord(SKU=sku)  # triggers validation form
                 selection.append((rec, qty))
 
-            # Validate and prompt for missing
+            # Validate and prompt if missing
             missing_any = False
             need_fba = s.print_fba_labels
             need_mrp = s.print_mrp_labels
+
             for rec, _qty in selection:
                 miss = []
-                if need_fba:
-                    miss += self.validation.missing_for_fba(rec)
-                if need_mrp:
-                    miss += self.validation.missing_for_mrp(rec)
+                if need_fba: miss += self.validation.missing_for_fba(rec)
+                if need_mrp: miss += self.validation.missing_for_mrp(rec)
                 miss = sorted(set(miss))
                 if miss:
                     missing_any = True
@@ -614,7 +676,6 @@ class LabelGeneratorPage(BasePage):
                                 placeholder = getattr(rec, field.replace("GST%", "GST"), "")
                                 updates[field] = st.text_input(field, value=str(placeholder), key=key)
                         if st.form_submit_button("Save"):
-                            # Merge & persist
                             new = SkuRecord.from_dict({
                                 "SKU": updates.get("SKU", rec.SKU) or rec.SKU,
                                 "ASIN": updates.get("ASIN", rec.ASIN) or rec.ASIN,
@@ -635,10 +696,8 @@ class LabelGeneratorPage(BasePage):
                 st.info("Fill the missing fields above, then click **Generate Labels** again.", icon="ℹ️")
                 st.stop()
 
-            # Render previews (unique SKUs only)
-            unique_by_sku: Dict[str, SkuRecord] = {}
-            for rec, _qty in selection:
-                unique_by_sku[rec.SKU] = rec
+            # Unique previews per SKU
+            unique_by_sku: Dict[str, SkuRecord] = {rec.SKU: rec for rec, _q in selection}
             unique_items = list(unique_by_sku.values())
 
             fonts = FontPack(s.font_path_regular, s.font_path_bold)
@@ -655,24 +714,22 @@ class LabelGeneratorPage(BasePage):
             show_n = s.limit_preview
             if show_n and (fba_preview_imgs or mrp_preview_imgs):
                 st.markdown("**Preview (unique labels per SKU)**")
-                prev_tabs = st.tabs(
-                    [t for t in (["FBA Preview"] if fba_preview_imgs else []) + (["MRP Preview"] if mrp_preview_imgs else [])]
-                    or ["Preview"]
-                )
+                tabs_prev = [t for t in (["FBA Preview"] if fba_preview_imgs else []) + (["MRP Preview"] if mrp_preview_imgs else [])] or ["Preview"]
+                prev_tabs = st.tabs(tabs_prev)
                 tab_idx = 0
                 if fba_preview_imgs:
                     with prev_tabs[tab_idx]:
                         cols = st.columns(6)
                         for i, im in enumerate(fba_preview_imgs[:show_n]):
                             with cols[i % 6]:
-                                st.image(im, caption="FBA", width='stretch', clamp=True)
+                                st.image(im, caption="FBA", use_container_width=True, clamp=True)
                     tab_idx += 1
                 if mrp_preview_imgs:
                     with prev_tabs[tab_idx]:
                         cols = st.columns(6)
                         for i, im in enumerate(mrp_preview_imgs[:show_n]):
                             with cols[i % 6]:
-                                st.image(im, caption="MRP", width='stretch', clamp=True)
+                                st.image(im, caption="MRP", use_container_width=True, clamp=True)
 
             # Build full print set by quantity (for PDF)
             expanded_fba, expanded_mrp = [], []
@@ -689,14 +746,13 @@ class LabelGeneratorPage(BasePage):
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             if s.print_fba_labels and expanded_fba:
                 buf = pdf.images_to_pdf_bytes(expanded_fba)
-                st.download_button("⬇️ Download FBA PDF", data=buf, file_name=f"fba_labels_{ts}.pdf", mime="application/pdf", width='stretch')
+                st.download_button("⬇️ Download FBA PDF", data=buf, file_name=f"fba_labels_{ts}.pdf", mime="application/pdf", use_container_width=True)
             if s.print_mrp_labels and expanded_mrp:
                 buf = pdf.images_to_pdf_bytes(expanded_mrp)
-                st.download_button("⬇️ Download MRP PDF", data=buf, file_name=f"mrp_labels_{ts}.pdf", mime="application/pdf", width='stretch')
+                st.download_button("⬇️ Download MRP PDF", data=buf, file_name=f"mrp_labels_{ts}.pdf", mime="application/pdf", use_container_width=True)
 
             if fonts.fallback_used:
                 st.warning("Fallback bitmap font used. Set valid .ttf files in **Settings → Fonts** for crisp print.", icon="🅰️")
-
 
 class CatalogPage(BasePage):
     def __init__(self, catalog_repo: CatalogRepository):
